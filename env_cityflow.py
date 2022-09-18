@@ -50,10 +50,14 @@ class CityFlowEnvM(object):
         self.intersection_id = list(intersection_Data.keys())
 
         self.lane_list = list(self.get_lane_vehicles().keys())
-        print(self.lane_list)
 
         self.road_id = list(road_Data.keys())
         # print(intersection_id)
+
+        self.topk_routes ={}
+
+        print(self.intersection_id)
+        print(self.road_id)
 
         self.roadnetFile = roadnetFile_path
         self.flowFile = flowFile_path
@@ -81,6 +85,8 @@ class CityFlowEnvM(object):
         self.low_bound_action = min_action
         self.upper_bound_action = max_action
 
+        self.genernate_topk_routes()
+
         flowData = json.load(open(flowFile_path))
         i = 0
         for vehicle in flowData:
@@ -107,6 +113,24 @@ class CityFlowEnvM(object):
         #     print(config_path)
         # self.eng = cityflow.Engine(config_path, thread_num=thread_num)
 
+
+    def genernate_topk_routes(self):
+        for road in self.road_id:
+            vi = self.road_Data[road]["end_intersection"]
+            self.topk_routes[road] = {
+                "road": road,
+                "route_list": {}
+            }
+            for intersection in self.intersection_id:
+                if vi != intersection:
+                    paths = self.get_Path(road, intersection)
+                    print("road:", road)
+                    print("intersection:", intersection)
+                    print(paths)
+                self.topk_routes[road]["route_list"].append()
+
+
+
     def generate_edges(self,
                        roadnet_file_path,
                        ):
@@ -123,6 +147,9 @@ class CityFlowEnvM(object):
     def bulk_log(self):
         # self.eng.print_log(os.path.join(self.path_to_log, "replay.txt"))
         self.eng.set_replay_file((os.path.join(self.path_to_log, "replay.txt")))
+
+    def get_vehicles(self):
+        return self.eng.get_vehicles()
 
     def get_current_time(self):
         return self.eng.get_current_time()
@@ -286,10 +313,11 @@ if __name__ == '__main__':
     env.reset()
     for i in range(500):
         env.next_step()
-        if i == 60:
+        if i == 30:
             print(env.get_vehicle_info("flow_0_0"))
-            env.set_vehicle_route("flow_0_0", ['road_4_2_1', 'road_4_3_1'])
+            env.set_vehicle_route("flow_0_0", ['road_4_1_1', 'road_4_2_0'])
         if i == 100:
+            print(env.get_vehicles())
             print(env.get_vehicle_info("flow_0_0"))
 
     # print(env.get_current_time())
