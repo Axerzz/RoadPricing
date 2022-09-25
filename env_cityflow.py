@@ -1,4 +1,11 @@
 # import cityflow
+import os
+import sys
+
+curPath = os.path.abspath(os.path.dirname(__file__))
+rootPath = os.path.split(curPath[0])
+sys.path.append(rootPath)
+
 import client.metaFlow as cityflow
 import pandas as pd
 import os
@@ -22,13 +29,13 @@ class CityFlowEnvM(object):
                  # dic_traffic_env_conf,
                  num_step=2000,
                  path_to_log='result',
-                 thread_num=1,
+                 thread_num=4,
                  cityflow_config_file='data/cityflow.config',
                  min_action=0,
                  max_action=6,
                  # action_limit=6,
-                 control_time=6,  # 单位小时
-                 period_time=2,  # 单位分钟
+                 control_time=1,  # 单位小时
+                 period_time=10,  # 单位分钟
                  free_flow_speed=5,
                  capacity_of_road=200,
                  w_=0.5,
@@ -42,7 +49,6 @@ class CityFlowEnvM(object):
         roadnetFile_path = configData['dir'] + configData['roadnetFile']
         flowFile_path = configData['dir'] + configData['flowFile']
 
-
         intersection_Data, road_Data = parse_roadnet(roadnetFile_path)
 
         self.road_Data = road_Data
@@ -54,10 +60,7 @@ class CityFlowEnvM(object):
         self.road_id = list(road_Data.keys())
         # print(intersection_id)
 
-        self.topk_routes ={}
-
-        print(self.intersection_id)
-        print(self.road_id)
+        self.topk_routes = {}
 
         self.roadnetFile = roadnetFile_path
         self.flowFile = flowFile_path
@@ -92,7 +95,7 @@ class CityFlowEnvM(object):
         for vehicle in flowData:
             flow_id = "flow_" + str(i) + "_0"
             self.car_ddl[flow_id] = np.random.randint(0, self.deadline_num)
-            i = i+1
+            i = i + 1
 
         # config_dict = {
         #     "interval": self.dic_traffic_env_conf["INTERVAL"],
@@ -113,23 +116,25 @@ class CityFlowEnvM(object):
         #     print(config_path)
         # self.eng = cityflow.Engine(config_path, thread_num=thread_num)
 
-
     def genernate_topk_routes(self):
         for road in self.road_id:
             vi = self.road_Data[road]["end_intersection"]
             self.topk_routes[road] = {
                 "road": road,
-                "route_list": {}
+                "terminal": [],
+                "routes": []
+
             }
             for intersection in self.intersection_id:
-                if vi != intersection:
                     paths = self.get_Path(road, intersection)
-                    print("road:", road)
-                    print("intersection:", intersection)
-                    print(paths)
-                self.topk_routes[road]["route_list"].append()
-
-
+                    new_paths = sorted(paths, key=lambda x: len(x))
+                    top_k_routes = []
+                    m = min(3, len(new_paths))
+                    for i in range(m):
+                        top_k_routes.append(new_paths[i])
+                    self.topk_routes[road]["terminal"].append(intersection)
+                    self.topk_routes[road]["routes"].append(top_k_routes)
+                # self.topk_routes[road]["route_list"].append()
 
     def generate_edges(self,
                        roadnet_file_path,
@@ -153,6 +158,12 @@ class CityFlowEnvM(object):
 
     def get_current_time(self):
         return self.eng.get_current_time()
+
+    def get_average_travel_time(self):
+        return self.eng.get_average_travel_time()
+
+    def get_finished_vehicle_count(self):
+        return self.eng.get_finished_vehicle_count()
 
     def set_vehicle_route(self, vehicleId, anchorId):
         return self.eng.set_vehicle_route(vehicleId, anchorId)
@@ -247,7 +258,6 @@ class CityFlowEnvM(object):
                    + 1 / (d + 1) * self.travel_time(e, d)
         return sum
 
-
     def step(self,
              action_vector,  # 传入新的收费值
              ):
@@ -270,6 +280,8 @@ class CityFlowEnvM(object):
         for lane in lane_list:
             for vehicle in lane_vehicles[lane]:
                 vehicle_des = self.get_vehicle_des(vehicle)
+                vehicle_info = self.get_vehicle_info(vehicle)
+                next_route = vehicle_info['route'].split(" ")[1]
 
                 i = self.road_id.index(lane[:-2])
                 j = self.intersection_id.index(vehicle_des)
@@ -278,15 +290,18 @@ class CityFlowEnvM(object):
                 next_state_matrix[i][j][ddl] += 1
 
                 # 修改vehicle route
-                paths = self.get_Path(lane[:-2], vehicle_des)
-                min_cost = 1e9
-                best_path = []
-                for path in paths:
-                    cost = self.travel_cost(path, ddl)
-                    if cost < min_cost:
-                        min_cost =cost
-                        best_path = path
-                self.set_vehicle_route(vehicle, best_path)
+                if next_route != "":
+                    paths = self.topk_routes[next_route]['routes'][j]
+
+                    # paths = self.get_Path(lane[:-2], vehicle_des)
+                    best_path = []
+                    min_cost = 1e9
+                    for path in paths:
+                        cost = self.travel_cost(path, ddl)
+                        if cost < min_cost:
+                            min_cost =cost
+                            best_path = path
+                    self.set_vehicle_route(vehicle, best_path)
 
         self.state_matrix = next_state_matrix
         sum_s = s.sum(axis=1)
@@ -304,7 +319,12 @@ class CityFlowEnvM(object):
             is_done = True
 
         simu_time = time() - t1
-        return self.state_matrix, rewards, is_done, info, simu_time
+
+        avg_time = self.get_average_travel_time()
+
+        finished_count = self.get_finished_vehicle_count()
+
+        return self.state_matrix, rewards, is_done, info , avg_time , finished_count
 
 
 if __name__ == '__main__':
@@ -314,6 +334,10 @@ if __name__ == '__main__':
     for i in range(500):
         env.next_step()
         if i == 30:
+            x = env.get_vehicle_info("flow_0_0")
+            route = x['route'].split(" ")[1]
+            print(x['route'])
+            print(route)
             print(env.get_vehicle_info("flow_0_0"))
             env.set_vehicle_route("flow_0_0", ['road_4_1_1', 'road_4_2_0'])
         if i == 100:
