@@ -346,6 +346,6 @@ if __name__ == '__main__':
 
     # print(env.get_current_time())
     # #
-    # print(env.get_lane_vehicles())
+    # print(env.get_lane_vehicles()) 
     # #
     env.close()
