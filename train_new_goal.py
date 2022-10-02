@@ -11,6 +11,8 @@ from Agents_new_goal import *
 from tensorboardX import SummaryWriter
 from collections import deque
 import torch
+import time
+import logging
 
 # #实例化app对象
 # app = Flask(__name__)
@@ -18,9 +20,16 @@ import torch
 
 # 使用0号gpu训练
 
+time = time.strftime("%m-%d-%H-%M-%S", time.localtime())
+
+logging.basicConfig(level=logging.DEBUG
+                    ,filename=time+"-result.log"
+                    ,filemode="w"
+                    ,format="%(asctime)s - %(name)s - %(levelname)-9s - %(filename)-8s : %(lineno)s line - %(message)s"
+                    ,datefmt="%Y-%m-%d %H:%M:%S"
+                    )
 
 writer = SummaryWriter('new_goal_log')
-
 
 # road_network = \
 #     [[0, Edge(0,0,1), Edge(1,0,2), 0, Edge(2,0,4)],
@@ -44,9 +53,9 @@ road_network = \
 
 def train_REINFORCE_NN():
     # 环境
-    # gra = Graph(road_network)
-    # env = TrafficEnvironment(gra)
-    env = CityFlowEnvM()
+    gra = Graph(road_network)
+    env = TrafficEnvironment(gra)
+    # env = CityFlowEnvM()
     env.reset()
     lower_bound_action, upper_bound_action = env.low_bound_action, env.upper_bound_action
 
@@ -74,7 +83,7 @@ def train_REINFORCE_NN():
 
         while not done:
             a = agent.get_actions(s.reshape(1, -1))  # 转换成一行
-            next_s, r, done, info, step_time = env.step(a)
+            next_s, r, done, info, step_time ,avg_time , finished_count= env.step(a)
             if done:
                 mask = 0
             else:
@@ -84,10 +93,12 @@ def train_REINFORCE_NN():
             G = G + r
 
         agent.train_model(memory)
-        if (epoch + 1) % 1 == 0:
+        if (epoch + 1) % 50 == 0:
             print("----------  epoch: " + (epoch + 1).__str__() + "  ----------")
             writer.add_scalar('Train/loss', agent.loss, epoch)
             writer.add_scalar('Train/G', G, epoch)
+            logging.info('Epoch {} / {}, loss:{:.4f}'.format(epoch+1, Iter, agent.loss.item()))
+            logging.info('           finished_count: '.format(finished_count))
             # writer.add_scalar('Train/mean', np.mean(G_log[:]), epoch)
             # G_log.append(G)
             # G_mean.append(np.mean(G_log[:]))
@@ -106,31 +117,3 @@ def train_REINFORCE_NN():
 
 
 train_REINFORCE_NN()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
