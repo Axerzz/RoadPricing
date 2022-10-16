@@ -149,6 +149,39 @@ class CityFlowEnvM(object):
         #     edges[i].print()
         return edges
 
+     def path_preference(self,
+                        vi,
+                        vj,
+                        one_path,
+                        d):
+        '''
+        :param vi: 出发地
+        :param vj: 目的地
+        :param one_path: 从目的地到出发地的一条路径
+        :param d: 车流的截止时间
+        :return: 计算一条路径的偏好度
+        '''
+
+        # 得到此条路径的cost
+        one_path_cost = self.travel_cost_by_one_path(one_path, d)
+        exp_one_path_cost = np.exp(-self.w_ * one_path_cost)
+
+        # 得到所有从出发地到目的地的路径
+        if vi == vj:
+            return 0
+        else:
+            all_paths = self.urban.get_path_by_complete_edge(vi, vj, p=[])
+            exp_all_paths_cost = 0
+            for path in all_paths.all_paths_by_edge:
+                exp_all_paths_cost += np.exp(-self.w_ * self.travel_cost_by_one_path(path, d))
+
+        # 计算比值
+        if exp_all_paths_cost == 0:
+            preference = 0
+        else:
+            preference = exp_one_path_cost / exp_all_paths_cost  # 这个地方可能0/0，出现nan
+        return preference
+    
     def bulk_log(self):
         # self.eng.print_log(os.path.join(self.path_to_log, "replay.txt"))
         self.eng.set_replay_file((os.path.join(self.path_to_log, "replay.txt")))
