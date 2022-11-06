@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 '''
-@Project ：new_goal 
+@Project ：new_goal
 @File    ：train_PPO.py
 @Author  ：xxuanZhu
-@Date    ：2022/10/13 20:33 
+@Date    ：2022/10/13 20:33
 @Purpose :
 '''
 
@@ -36,7 +36,7 @@ class ActorPPO(nn.Module):
         logprob = dist.log_prob(action).sum(1)
         return action, logprob
 
-    def get_logprob_entrop(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
+    def get_logprob_entropy(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
         action_avg = self.net(state)
         action_std = self.action_std_log.exp()
 
@@ -90,22 +90,22 @@ class Config:
         self.learning_rate = 6e-5  # 2 ** -14 ~= 6e-5
         self.soft_update_tau = 5e-3  # 2 ** -8 ~= 5e-3
         self.batch_size = int(128)  # num of transitions sampled from replay buffer.
-        self.horizon_len = int(2000)  # collect horizon_len step while exploring, then update network
+        self.horizon_len = int(30)  # collect horizon_len step while exploring, then update network
         self.buffer_size = None  # ReplayBuffer size. Empty the ReplayBuffer for on-policy.
         self.repeat_times = 8.0  # repeatedly update network using ReplayBuffer to keep critic's loss small
 
         '''device arguments'''
-        self.gpu_id = int(-1)  # `int` means the ID of single GPU, -1 means CPU
+        self.gpu_id = int(0)  # `int` means the ID of single GPU, -1 means CPU
         self.thread_num = int(8)  # cpu_num for pytorch, `torch.set_num_threads(self.num_threads)`
         self.random_seed = int(0)  # initialize random seed in self.init_before_training()
 
         '''evaluate arguments'''
         self.cwd = None  # current working directory to save model. None means set automatically
         self.if_remove = True  # remove the cwd folder? (True, False, None:ask me)
-        self.break_step = +np.inf  # break training if 'total_step > break_step'
+        self.break_step = +np.inf # break training if 'total_step > break_step'
 
-        self.eval_times = int(32)  # number of times that get episodic cumulative return
-        self.eval_per_step = int(2e4)  # evaluate the agent per training steps
+        self.eval_times = int(6)  # number of times that get episodic cumulative return
+        self.eval_per_step = int(2e1)  # evaluate the agent per training steps
 
     def init_before_training(self):
         if self.cwd is None:
@@ -159,6 +159,7 @@ class AgentBase:
 
         self.last_state = None  # save the last state of the trajectory for training. `last_state.shape == (state_dim)`
         self.device = torch.device(f"cuda:{gpu_id}" if (torch.cuda.is_available() and (gpu_id >= 0)) else "cpu")
+        print(self.device)
 
         act_class = getattr(self, "act_class", None)
         cri_class = getattr(self, "cri_class", None)
@@ -198,6 +199,7 @@ class AgentPPO(AgentBase):
         self.lambda_entropy = torch.tensor(self.lambda_entropy, dtype=torch.float32, device=self.device)
 
     def explore_env(self, env, horizon_len: int) -> [Tensor]:
+        print("explore env")
         states = torch.zeros((horizon_len, self.state_dim), dtype=torch.float32).to(self.device)
         actions = torch.zeros((horizon_len, self.action_dim), dtype=torch.float32).to(self.device)
         logprobs = torch.zeros(horizon_len, dtype=torch.float32).to(self.device)
@@ -208,16 +210,20 @@ class AgentPPO(AgentBase):
         get_action = self.act.get_action
         convert = self.act.convert_action_for_env
         for i in range(horizon_len):
-            state = torch.as_tensor(ary_state, dtype=torch.float32, device=self.device)
-            action, logprob = [t for t in get_action(state.flatten())]
+            state = torch.as_tensor(np.sum(ary_state, axis=(1, 2)), dtype=torch.float32, device=self.device)
+            # print("horizon state ", i, " is ", state)
+            action, logprob = [t for t in get_action(state)]
+            # print("horizon action ", i, " is ", action)
             # action, logprob = [t.squeeze(0) for t in get_action(state.unsqueeze(0))[:2]]
 
-            ary_action = convert((action+1)*3).detach().cpu().numpy()
+            ary_action = np.around(((convert(action) + 1) * 3).detach().cpu().numpy(), 2)
+            # print("horizon true action ", i, " is ", ary_action)
+            print(i)
             ary_state, reward, done, info, avg_time, finished_count = env.step(ary_action)
             if done:
                 ary_state = env.reset()
 
-            states[i] = state.flatten()
+            states[i] = state
             actions[i] = action
             logprobs[i] = logprob
             rewards[i] = reward
@@ -229,6 +235,7 @@ class AgentPPO(AgentBase):
         return states, actions, logprobs, rewards, undones
 
     def update_net(self, buffer) -> [float]:
+        print("update net")
         with torch.no_grad():
             states, actions, logprobs, rewards, undones = buffer
             buffer_size = states.shape[0]
@@ -283,8 +290,9 @@ class AgentPPO(AgentBase):
         masks = undones * self.gamma
         horizon_len = rewards.shape[0]
 
-        next_state = torch.tensor(self.last_state, dtype=torch.float32).to(self.device)
-        next_value = self.cri(next_state.unsqueeze(0)).detach().squeeze(1).squeeze(0)
+        next_state = torch.tensor(np.sum(self.last_state, axis=(1, 2)), dtype=torch.float32).to(self.device)
+        # next_value = self.cri(next_state.unsqueeze(0)).detach().squeeze(1).squeeze(0)
+        next_value = self.cri(next_state).detach()
 
         advantage = 0  # last_gae_lambda
         for t in range(horizon_len - 1, -1, -1):
@@ -299,7 +307,7 @@ def train_agent(args: Config):
 
     env = args.env_class
     agent = args.agent_class(args.net_dims, args.state_dim, args.action_dim, gpu_id=args.gpu_id, args=args)
-    agent.last_state = env.reset()
+    agent.last_state = env.reset()  # (edge_num, edge_num. ddl_num)
 
     evaluator = Evaluator(eval_env=env,
                           eval_per_step=args.eval_per_step,
@@ -340,6 +348,7 @@ class Evaluator:
               f"\n| {'step':>8}  {'time':>8}  | {'avgR':>8}  {'stdR':>6}  {'avgS':>6}  | {'objC':>8}  {'objA':>8}")
 
     def evaluate_and_save(self, actor, horizon_len: int, logging_tuple: tuple):
+        print("evaluate and save")
         self.total_step += horizon_len
         if self.eval_step + self.eval_per_step > self.total_step:
             return
@@ -357,19 +366,23 @@ class Evaluator:
         print(f"| {self.total_step:8.2e}  {used_time:8.0f}  "
               f"| {avg_r:8.2f}  {std_r:6.2f}  {avg_s:6.0f}  "
               f"| {logging_tuple[0]:8.2f}  {logging_tuple[1]:8.2f}")
+        print(self.recorder)
+        print(self.recorder[-1])
 
 
 def get_rewards_and_steps(env, actor, if_render: bool = False) -> (float, int):  # cumulative_rewards and episode_steps
+    print("get rewards and steps")
     device = next(actor.parameters()).device  # net.parameters() is a Python generator.
 
     state = env.reset()
     episode_steps = 0
     cumulative_returns = 0.0  # sum of rewards in an episode
     for episode_steps in range(12345):
-        tensor_state = torch.as_tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+        tensor_state = torch.as_tensor(np.sum(state, axis=(1,2)), dtype=torch.float32, device=device)
         tensor_action = actor(tensor_state)
-        action = tensor_action.detach().cpu().numpy()[0]  # not need detach(), because using torch.no_grad() outside
-        state, reward, done, _ = env.step(action)
+        action = tensor_action.detach().cpu().numpy()  # not need detach(), because using torch.no_grad() outside
+        new_action = np.reshape(action,(1,80))
+        state, reward, done, info, avg_time, finished_count = env.step(new_action)
         cumulative_returns += reward
 
         if if_render:
@@ -380,23 +393,22 @@ def get_rewards_and_steps(env, actor, if_render: bool = False) -> (float, int): 
 
 
 def train_ppo():
+    print("train PPO")
     agent_class = AgentPPO
     env_class = CityFlowEnvM()
     env_args = {
         'env_name': 'cityflow',  # Apply torque on the free end to swing a pendulum into an upright position
-        'state_dim': env_class.edges_num * env_class.zones_num * env_class.deadline_num,
+        'state_dim': env_class.edges_num,
         # the x-y coordinates of the pendulum's free end and its angular velocity.
         'action_dim': env_class.edges_num,  # the torque applied to free end of the pendulum
         'if_discrete': False  # continuous action space, symbols → direction, value → force
     }
-    print(env_args['state_dim'])
-    print(env_args['action_dim'])
-
+    print(env_class.edges_num)
 
     # get_gym_env_args(env=CityFlowEnvM(), if_print=True)  # return env_args
 
     args = Config(agent_class, env_class, env_args)  # see `config.py Arguments()` for hyperparameter explanation
-    args.break_step = int(2e5)  # break training if 'total_step > break_step'
+    args.break_step = int(4e5)  # break training if 'total_step > break_step'
     args.net_dims = (64, 32)  # the middle layer dimension of MultiLayer Perceptron
     args.gamma = 0.97  # discount factor of future rewards
     args.repeat_times = 16  # repeatedly update network using ReplayBuffer to keep critic's loss small
