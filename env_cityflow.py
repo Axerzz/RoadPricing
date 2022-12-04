@@ -1,23 +1,16 @@
 # import cityflow
-import os 
+import os
 import sys
 
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath[0])
 sys.path.append(rootPath)
- 
+
 import client.metaFlow as cityflow
-import pandas as pd
 import os
 from time import time
-import math
 import numpy as np
-import json
-import itertools
-import random
-from new_goal.utils import Graph, Path, Edge
-from new_goal.utils import *
-from scipy import stats
+from utils import *
 
 
 class CityFlowEnvM(object):
@@ -42,6 +35,7 @@ class CityFlowEnvM(object):
                  w=0.5,
 
                  ):
+        self.env_name = 'CityFlow'
         self.eng = cityflow.Engine(cityflow_config_file, thread_num=thread_num)
         self.car_ddl = {}
 
@@ -69,6 +63,8 @@ class CityFlowEnvM(object):
         self.edges_num = len(self.road_id)  # 道路总数
 
         self.edges = self.generate_edges(self.roadnetFile)
+
+        self.finish_num = 0
 
         self.num_step = num_step
         self.path_to_log = path_to_log
@@ -126,15 +122,15 @@ class CityFlowEnvM(object):
 
             }
             for intersection in self.intersection_id:
-                    paths = self.get_Path(road, intersection)
-                    new_paths = sorted(paths, key=lambda x: len(x))
-                    top_k_routes = []
-                    m = min(3, len(new_paths))
-                    for i in range(m):
-                        top_k_routes.append(new_paths[i])
-                    self.topk_routes[road]["terminal"].append(intersection)
-                    self.topk_routes[road]["routes"].append(top_k_routes)
-                # self.topk_routes[road]["route_list"].append()
+                paths = self.get_Path(road, intersection)
+                new_paths = sorted(paths, key=lambda x: len(x))
+                top_k_routes = []
+                m = min(3, len(new_paths))
+                for i in range(m):
+                    top_k_routes.append(new_paths[i])
+                self.topk_routes[road]["terminal"].append(intersection)
+                self.topk_routes[road]["routes"].append(top_k_routes)
+            # self.topk_routes[road]["route_list"].append()
 
     def generate_edges(self,
                        roadnet_file_path,
@@ -149,39 +145,6 @@ class CityFlowEnvM(object):
         #     edges[i].print()
         return edges
 
-     def path_preference(self,
-                        vi,
-                        vj,
-                        one_path,
-                        d):
-        '''
-        :param vi: 出发地
-        :param vj: 目的地
-        :param one_path: 从目的地到出发地的一条路径
-        :param d: 车流的截止时间
-        :return: 计算一条路径的偏好度
-        '''
-
-        # 得到此条路径的cost
-        one_path_cost = self.travel_cost_by_one_path(one_path, d)
-        exp_one_path_cost = np.exp(-self.w_ * one_path_cost)
-
-        # 得到所有从出发地到目的地的路径
-        if vi == vj:
-            return 0
-        else:
-            all_paths = self.urban.get_path_by_complete_edge(vi, vj, p=[])
-            exp_all_paths_cost = 0
-            for path in all_paths.all_paths_by_edge:
-                exp_all_paths_cost += np.exp(-self.w_ * self.travel_cost_by_one_path(path, d))
-
-        # 计算比值
-        if exp_all_paths_cost == 0:
-            preference = 0
-        else:
-            preference = exp_one_path_cost / exp_all_paths_cost  # 这个地方可能0/0，出现nan
-        return preference
-    
     def bulk_log(self):
         # self.eng.print_log(os.path.join(self.path_to_log, "replay.txt"))
         self.eng.set_replay_file((os.path.join(self.path_to_log, "replay.txt")))
@@ -197,6 +160,13 @@ class CityFlowEnvM(object):
 
     def get_finished_vehicle_count(self):
         return self.eng.get_finished_vehicle_count()
+
+    def set_replay_file(self, replay_file):
+        return self.eng.set_replay_file(replay_file)
+
+    def set_save_replay(self, open):
+        return self.eng.set_save_replay(open)
+
 
     def set_vehicle_route(self, vehicleId, anchorId):
         return self.eng.set_vehicle_route(vehicleId, anchorId)
@@ -220,16 +190,17 @@ class CityFlowEnvM(object):
 
     def reset(self):
         self.eng.reset()
+        self.finish_num = 0
         self.create_state_matrix()
         self.create_action_vector()
-        self.t = 1
+        self.t = 0
         return self.state_matrix
 
     # 初始化状态矩阵
     def create_state_matrix(self):
         # zones,  # 目的地数目
         # edges,  # 总的路数
-        self.state_matrix = np.zeros((self.edges_num, self.zones_num, self.deadline_num), dtype=int)
+        self.state_matrix = np.zeros((self.edges_num, self.zones_num, self.deadline_num+1), dtype=int)
         self.next_step()
         lane_vehicles = self.get_lane_vehicles()
 
@@ -286,8 +257,11 @@ class CityFlowEnvM(object):
                     ):
         sum = 0
         # destination_index = path.get_dest()
+        # print(np.array(self.action_vector).shape)
+        # print(self.action_vector)
         for e in path:
-            sum += self.action_vector[0, int(self.road_id.index(e))] \
+            #print(self.road_id.index(e))
+            sum += self.action_vector[0][int(self.road_id.index(e))] \
                    + 1 / (d + 1) * self.travel_time(e, d)
         return sum
 
@@ -332,7 +306,7 @@ class CityFlowEnvM(object):
                     for path in paths:
                         cost = self.travel_cost(path, ddl)
                         if cost < min_cost:
-                            min_cost =cost
+                            min_cost = cost
                             best_path = path
                     self.set_vehicle_route(vehicle, best_path)
 
@@ -348,16 +322,18 @@ class CityFlowEnvM(object):
         rewards = int(rewards)
 
         self.t += 1
-        if self.t == self.control_time / self.period_time:
+        if self.t == (self.control_time / self.period_time):
             is_done = True
 
         simu_time = time() - t1
 
         avg_time = self.get_average_travel_time()
 
-        finished_count = self.get_finished_vehicle_count()
+        finished_count = self.get_finished_vehicle_count() - self.finish_num
 
-        return self.state_matrix, rewards, is_done, info , avg_time , finished_count
+        self.finish_num = finished_count
+
+        return self.state_matrix, rewards, is_done, info, avg_time, finished_count
 
 
 if __name__ == '__main__':
@@ -379,6 +355,6 @@ if __name__ == '__main__':
 
     # print(env.get_current_time())
     # #
-    # print(env.get_lane_vehicles()) 
+    # print(env.get_lane_vehicles())
     # #
     env.close()
