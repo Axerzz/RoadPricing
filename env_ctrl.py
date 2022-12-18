@@ -160,12 +160,9 @@ class CTRL_ENV(object):
         # time parameters
         self.control_time = control_time  # the range of control time
         self.step_time = step_time  # each step time
-        self.t = 0
-
-
 
         # generate the alternative routes for each OD
-        flowData = json.load(open(flowFile_path))  # get flow data
+       # flowData = json.load(open(flowFile_path))  # get flow data
         self.origin_set = set()
         self.dest_set = set()
         self.all_path = {}
@@ -176,11 +173,11 @@ class CTRL_ENV(object):
         # self.all_path = self.generate_topk_paths()
 
         # two，只求flow文件中出现的OD的 top 5 distance路径
-        self.all_path = self.get_OD_set_and_paths(flowData)
+        # self.all_path = self.get_OD_set_and_paths(flowData)
 
         # 得到每个OD的三条候选路径
         self.alternative_3_routes = {}
-        self.alternative_3_routes = self.generate_alternative_3_routes()  # generate 3 routes for each OD
+        # self.alternative_3_routes = self.generate_alternative_3_routes()  # generate 3 routes for each OD
 
         # road view
         self.road_features = None  # the state to enter self attention
@@ -189,10 +186,9 @@ class CTRL_ENV(object):
         self.route_state = None
         self.action = None
 
+
         self.fc_NN = FullConnection()
 
-        self.zeta = 0.8
-        self.max_speed = 50.0  # 不准确，后续需修改
 
     def get_lane_vehicles(self):
         """
@@ -241,7 +237,9 @@ class CTRL_ENV(object):
         #         alternative_3_routes[road]['routes']['min_dis'] = final_paths[0]
         #         alternative_3_routes[road]['routes']['min_lights'] = final_paths[1]
         #         alternative_3_routes[road]['routes']['min_vehicles'] = final_paths[2]
-        # return alternative_3_routes
+        return alternative_3_routes
+
+
 
     def get_all_paths(self, road_i, vj, path=[], intersection=[]):
         """
@@ -265,6 +263,8 @@ class CTRL_ENV(object):
                 for new_path in new_paths:
                     paths.append(new_path)
         return paths
+
+
 
     def find_shortest(self, paths):
         """
@@ -341,11 +341,10 @@ class CTRL_ENV(object):
         self.eng.next_step()
         new_enter_vehicles_id = self.eng.get_new_enter_vehicles_id()
         for vehicle in new_enter_vehicles_id:
-            path = self.eng.get_vehicle_info(vehicle)['route']
+            path = self.eng.get_vehicle_info(vehicleId)['route']
             origin = path[0]
             dest = path[-1]
-            best_path = self.get_best_from_3_path(origin, dest)
-            self.eng.change_vehicle_routeList(vehicle, best_path)
+            self.eng.change_vehicle_routeList(vehicleId, best_path)
 
     def reset(self):
         self.eng.reset()
@@ -353,7 +352,7 @@ class CTRL_ENV(object):
         self.create_state()
         self.create_action()
         self.t = 0
-        return self.route_state
+        return self.state
 
     # TODO
     def create_state(self):
@@ -370,12 +369,7 @@ class CTRL_ENV(object):
         #         min_dis_path = self.alternative_3_routes[road][intersection]['min_distance']
         #         min_lights_path = self.alternative_3_routes[road][intersection]['min_lights']
         #         min_vehicles_path = self.alternative_3_routes[road][intersection]['min_vehicles']
-
-        # self.route_state = np.zeros(3, dtype=np.float64)
-        for origin in self.origin_set:
-            self.route_state[origin] = {}
-            for dest in self.dest_set:
-                self.route_state[origin][dest] = np.zeros(3, dtype=np.float64)
+        self.route_state = np.zeros(3, dtype=np.float64)
 
     # TODO
     def create_action(self):
@@ -397,47 +391,12 @@ class CTRL_ENV(object):
 
         return dis
 
-    def get_road_delay(self, road):
-        #calculate lambda_road
-        lambda_road = 0.0
-        road_record = self.eng.get_road_record(road)
-        j = 0
-        total_time = 0
-        for iter in road_record:
-            if road_record[iter][1] > self.t * self.step_time:
-                j += 1
-                total_time += road_record[iter][1] - road_record[iter][0]
-        lambda_road = total_time / j
-        len = self.eng.get_road_length(road)
-        road_delay = self.zeta * (lambda_road - len / self.max_speed)
-        return road_delay
-
-    def get_path_delay(self, path):
-        delay = 0
-        for road in path:
-            delay += self.get_road_delay(road)
-        return delay
-
-    def get_best_from_3_path(self, origin, dest):
-        destination = 'intersection_' + dest[5:8]
-        paths = self.alternative_3_routes[origin][destination]
-        delay_min = 0
-        best_path = []
-        for i in paths:
-            path = paths[i][1]
-            delay_tmp = self.get_path_delay(path)
-            if delay_tmp < delay_min:
-                best_path = path
-                delay_min = delay_tmp
-        return best_path
-
     # TODO
     def step(self,
              action,
              ):
         stime = time()
         next_state = None
-        reward = 0.0
         global_delay_index = 0.0
         is_done = False
         info = None
@@ -448,34 +407,13 @@ class CTRL_ENV(object):
             self.next_step()
 
         # 计算delay index
-        for road in self.roads_id:
-            self.road_features = self.get_road_delay(road)
-            global_delay_index += self.road_features
-
-        for origin in self.origin_set:
-            self.route_state[origin] = {}
-            for dest in self.dest_set:
-                destination = 'intersection_' + dest[5:8]
-                self.route_state[origin][dest][0] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_distance'])
-                self.route_state[origin][dest][1] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_lights'])
-                self.route_state[origin][dest][2] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_vehicles'])
 
         lane_vehicles = self.get_lane_vehicles()
         lane_list = self.lane_vehicleId_list
 
-        self.t += 1
-        if self.t == (self.control_time / self.step_time):
-            is_done = True
-
-        avg_travel_time = self.eng.get_average_travel_time()
-
-        reward = global_delay_index
-
         # state 三种路径的delay数组
-        return self.route_state, reward, is_done, info, avg_travel_time
+        # reward  =  d_global
+        return state ,reward
 
     def get_OD_set_and_paths(self, flowData):
         """
@@ -564,15 +502,13 @@ class CTRL_ENV(object):
 
         return return_paths
 
-
 if __name__ == '__main__':
-    env = CTRL_ENV()
+    cityflow_config_file = 'data/cityflow.config'
+    eng = cityflow.Engine(cityflow_config_file, thread_num=4)
     for i in range(600):
-        env.eng.next_step()
+        eng.next_step()
         # data = env.eng.get_vehicles_id()
         # for v in data:
         #     info = env.eng.get_vehicle_info(v)
         #     y = 1
         # x = 1
-    # env.get_road_delay("road_1_1_1")
-
