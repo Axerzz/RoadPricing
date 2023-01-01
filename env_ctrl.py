@@ -168,6 +168,7 @@ class CTRL_ENV(object):
         flowData = json.load(open(flowFile_path))  # get flow data
         self.origin_set = set()
         self.dest_set = set()
+        self.destinter_set = set()
         self.all_path = {}
 
         # 以下二选一
@@ -186,8 +187,8 @@ class CTRL_ENV(object):
         self.road_features = None  # the state to enter self attention
 
         # route view
-        self.route_state = None
-        self.action = None
+        self.route_state = {}
+        self.action = {}
 
         self.fc_NN = FullConnection()
 
@@ -374,8 +375,18 @@ class CTRL_ENV(object):
         # self.route_state = np.zeros(3, dtype=np.float64)
         for origin in self.origin_set:
             self.route_state[origin] = {}
-            for dest in self.dest_set:
-                self.route_state[origin][dest] = np.zeros(3, dtype=np.float64)
+            intersections = self.all_path[origin]
+            for dest in intersections:
+                self.route_state[origin][dest] = {}
+                self.route_state[origin][dest][0] = []
+                self.route_state[origin][dest][1] = []
+                self.route_state[origin][dest][2] = []
+                for road in self.alternative_3_routes[origin][dest]['min_distance']:
+                    self.route_state[origin][dest][0].append(self.get_road_delay(road))
+                for road in self.alternative_3_routes[origin][dest]['min_lights']:
+                    self.route_state[origin][dest][1].append(self.get_road_delay(road))
+                for road in self.alternative_3_routes[origin][dest]['min_vehicles']:
+                    self.route_state[origin][dest][2].append(self.get_road_delay(road))
 
     # TODO
     def create_action(self):
@@ -404,12 +415,15 @@ class CTRL_ENV(object):
         #calculate lambda_road
         lambda_road = 0.0
         road_record = self.eng.get_road_record(road)
+        road_delay = 0
         j = 0
         total_time = 0
         for iter in road_record:
             if road_record[iter][1] > self.t * self.step_time:
                 j += 1
                 total_time += road_record[iter][1] - road_record[iter][0]
+        if j == 0:
+            return road_delay
         lambda_road = total_time / j
         len = self.eng.get_road_length(road)
         road_delay = self.zeta * (lambda_road - len / self.max_speed)
@@ -459,15 +473,25 @@ class CTRL_ENV(object):
 
         for origin in self.origin_set:
             self.route_state[origin] = {}
-            for dest in self.dest_set:
-                destination = 'intersection_' + dest[5:8]
-                self.route_state[origin][dest][0] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_distance'])
-                self.route_state[origin][dest][1] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_lights'])
-                self.route_state[origin][dest][2] = self.get_path_delay(
-                    self.alternative_3_routes[origin][destination]['min_vehicles'])
-
+            intersections = self.all_path[origin]
+            for dest in intersections:
+                new_state = {}
+                new_state[0] = []
+                new_state[1] = []
+                new_state[2] = []
+                for road in self.alternative_3_routes[origin][dest]['min_distance']:
+                    new_state[0].append(self.get_road_delay(road))
+                for road in self.alternative_3_routes[origin][dest]['min_lights']:
+                    new_state[1].append(self.get_road_delay(road))
+                for road in self.alternative_3_routes[origin][dest]['min_vehicles']:
+                    new_state[2].append(self.get_road_delay(road))
+                self.route_state = new_state
+                # self.route_state[origin][dest][0] = self.get_path_delay(
+                #     self.alternative_3_routes[origin][destination]['min_distance'])
+                # self.route_state[origin][dest][1] = self.get_path_delay(
+                #     self.alternative_3_routes[origin][destination]['min_lights'])
+                # self.route_state[origin][dest][2] = self.get_path_delay(
+                #     self.alternative_3_routes[origin][destination]['min_vehicles'])
         lane_vehicles = self.get_lane_vehicles()
         lane_list = self.lane_vehicleId_list
 
@@ -499,6 +523,7 @@ class CTRL_ENV(object):
                 self.origin_set.add(origin)
                 self.dest_set.add(dest)
                 destination = 'intersection_' + dest[5:8]
+                self.destinter_set.add(destination)
                 all_path[origin] = {}
                 all_path[origin][destination] = []
                 paths = self.get_all_paths(origin, destination)
@@ -520,6 +545,7 @@ class CTRL_ENV(object):
             path = vehicle['route']
             origin = path[0]
             dest = path[-1]
+            destination = 'intersection_' + dest[5:8]
             origin_set.add(origin)
             dest_set.add(dest)
         return origin_set, dest_set
@@ -570,10 +596,13 @@ class CTRL_ENV(object):
         return return_paths
 
 
+
+
 if __name__ == '__main__':
     env = CTRL_ENV()
-    for i in range(600):
-        env.eng.next_step()
+    env.reset()
+    # for i in range(600):
+    #     env.eng.next_step()
         # data = env.eng.get_vehicles_id()
         # for v in data:
         #     info = env.eng.get_vehicle_info(v)
