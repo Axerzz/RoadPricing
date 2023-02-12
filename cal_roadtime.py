@@ -200,4 +200,5 @@ if __name__ == '__main__':
                 up_cnt += 1
                 env.change_vehicle_routeList(vehicle, route_up)
     print(down_cnt, up_cnt)
+    
 
